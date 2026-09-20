@@ -1,0 +1,49 @@
+{
+  "name": "@ops-copilot/api-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "worker": "node dist/worker.js",
+    "worker:dev": "tsx watch src/worker.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:integration": "vitest run src/integration/mysql.integration.test.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@prisma/client": "6.12.0",
+    "bcrypt": "6.0.0",
+    "bullmq": "5.81.5",
+    "cookie-parser": "1.4.7",
+    "cron-parser": "4.9.0",
+    "cors": "2.8.6",
+    "express": "5.2.1",
+    "helmet": "8.3.0",
+    "ioredis": "5.7.0",
+    "jsonwebtoken": "9.0.3",
+    "multer": "2.4.0",
+    "pino": "10.3.1",
+    "pino-http": "11.0.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "6.0.0",
+    "@types/cookie-parser": "1.4.10",
+    "@types/cors": "2.8.19",
+    "@types/express": "5.0.5",
+    "@types/jsonwebtoken": "9.0.10",
+    "@types/multer": "2.0.0",
+    "@types/node": "24.10.1",
+    "@types/supertest": "6.0.3",
+    "prisma": "6.12.0",
+    "supertest": "7.2.2",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  }
+}

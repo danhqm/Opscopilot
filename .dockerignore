@@ -1,0 +1,11 @@
+.git
+.github
+**/node_modules
+**/.next
+**/dist
+**/__pycache__
+**/.pytest_cache
+.env*
+!.env.example
+!.env.production.example
+uploads

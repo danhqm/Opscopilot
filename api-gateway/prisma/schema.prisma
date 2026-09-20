@@ -1,0 +1,168 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum DocumentStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+  TOOL
+}
+
+enum TriggerType {
+  MANUAL
+  CRON
+}
+
+enum RunStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum TaskStatus {
+  OPEN
+  DONE
+  CANCELLED
+}
+
+model User {
+  id              String         @id @default(uuid()) @db.Char(36)
+  email           String         @unique @db.VarChar(191)
+  passwordHash    String         @map("password_hash") @db.VarChar(255)
+  apiKeyEncrypted String?        @map("api_key_encrypted") @db.Text
+  createdAt       DateTime       @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.DateTime(3)
+  documents       Document[]
+  conversations   Conversation[]
+  workflows       Workflow[]
+  refreshTokens   RefreshToken[]
+  tasks           Task[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Char(36)
+  userId    String    @map("user_id") @db.Char(36)
+  tokenHash String    @unique @map("token_hash") @db.Char(64)
+  expiresAt DateTime  @map("expires_at") @db.DateTime(3)
+  revokedAt DateTime? @map("revoked_at") @db.DateTime(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("refresh_tokens")
+}
+
+model Document {
+  id                 String         @id @default(uuid()) @db.Char(36)
+  userId             String         @map("user_id") @db.Char(36)
+  filename           String         @db.VarChar(255)
+  storagePath        String         @map("storage_path") @db.VarChar(512)
+  mimeType           String         @default("application/octet-stream") @map("mime_type") @db.VarChar(100)
+  sizeBytes          BigInt         @default(0) @map("size_bytes") @db.UnsignedBigInt
+  status             DocumentStatus @default(PENDING)
+  chromaCollectionId String?        @map("chroma_collection_id") @db.VarChar(191)
+  chunkCount         Int?           @map("chunk_count") @db.UnsignedInt
+  failureReason      String?        @map("failure_reason") @db.Text
+  processedAt        DateTime?      @map("processed_at") @db.DateTime(3)
+  createdAt          DateTime       @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.DateTime(3)
+  user               User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, createdAt])
+  @@map("documents")
+}
+
+model Conversation {
+  id        String    @id @default(uuid()) @db.Char(36)
+  userId    String    @map("user_id") @db.Char(36)
+  title     String    @db.VarChar(255)
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@index([userId, updatedAt])
+  @@map("conversations")
+}
+
+model Message {
+  id            String        @id @default(uuid()) @db.Char(36)
+  conversationId String       @map("conversation_id") @db.Char(36)
+  role          MessageRole
+  content       String        @db.LongText
+  toolCallsJson Json?         @map("tool_calls_json")
+  model         String?       @db.VarChar(100)
+  inputTokens   Int?          @map("input_tokens") @db.UnsignedInt
+  outputTokens  Int?          @map("output_tokens") @db.UnsignedInt
+  totalTokens   Int?          @map("total_tokens") @db.UnsignedInt
+  createdAt     DateTime      @default(now()) @map("created_at") @db.DateTime(3)
+  conversation  Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+model Workflow {
+  id             String        @id @default(uuid()) @db.Char(36)
+  userId         String        @map("user_id") @db.Char(36)
+  name           String        @db.VarChar(191)
+  triggerType    TriggerType   @map("trigger_type")
+  cronExpression String?       @map("cron_expression") @db.VarChar(100)
+  /// Ordered workflow steps remain JSON because tool payloads are heterogeneous and versioned.
+  stepsJson      Json          @map("steps_json")
+  isActive       Boolean       @default(true) @map("is_active")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.DateTime(3)
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runs           WorkflowRun[]
+
+  @@index([userId, isActive])
+  @@map("workflows")
+}
+
+model WorkflowRun {
+  id         String     @id @default(uuid()) @db.Char(36)
+  workflowId String     @map("workflow_id") @db.Char(36)
+  status     RunStatus  @default(QUEUED)
+  outputJson Json?      @map("output_json")
+  startedAt  DateTime?  @map("started_at") @db.DateTime(3)
+  finishedAt DateTime?  @map("finished_at") @db.DateTime(3)
+  createdAt  DateTime   @default(now()) @map("created_at") @db.DateTime(3)
+  workflow   Workflow   @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([workflowId, createdAt])
+  @@index([status, createdAt])
+  @@map("workflow_runs")
+}
+
+model Task {
+  id          String     @id @default(uuid()) @db.Char(36)
+  userId      String     @map("user_id") @db.Char(36)
+  title       String     @db.VarChar(255)
+  description String?    @db.Text
+  dueAt       DateTime?  @map("due_at") @db.DateTime(3)
+  status      TaskStatus @default(OPEN)
+  createdAt   DateTime   @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.DateTime(3)
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, dueAt])
+  @@map("tasks")
+}

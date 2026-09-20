@@ -1,0 +1,242 @@
+name: CI and production deploy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  GCP_PROJECT_ID: ops-copilot-509214
+  GCP_PROJECT_NUMBER: "722903758316"
+  GCP_REGION: asia-southeast1
+  GCP_ZONE: asia-southeast1-b
+  GCP_VM_NAME: ops-copilot
+  GAR_REPOSITORY: ops-copilot
+  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/722903758316/locations/global/workloadIdentityPools/github/providers/ops-copilot
+  GCP_DEPLOY_SERVICE_ACCOUNT: ops-copilot-github@ops-copilot-509214.iam.gserviceaccount.com
+  PRODUCTION_SECRET_ID: ops-copilot-production-env
+  PRODUCTION_SECRET_VERSION: "1"
+  OPS_COPILOT_DOMAIN: ""
+
+concurrency:
+  group: ops-copilot-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  quality:
+    name: Lint, test, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            api-gateway/package-lock.json
+
+      - name: Install Node dependencies
+        run: |
+          npm ci --prefix frontend
+          npm ci --prefix api-gateway
+
+      - name: Create safe CI environment
+        run: cp .env.example .env
+
+      - name: Lint and typecheck
+        run: npm run lint
+
+      - name: Run API unit tests
+        run: npm test
+
+      - name: Build Node applications
+        run: npm run build
+
+      - name: Build container test targets
+        run: docker compose --profile test build agent-test mcp-test api-integration-test migrate
+
+      - name: Run agent-service tests
+        run: docker compose --profile test run --rm --no-deps agent-test
+
+      - name: Run MCP server tests
+        run: docker compose --profile test run --rm --no-deps mcp-test
+
+      - name: Run MySQL integration test
+        run: docker compose --profile test run --rm api-integration-test
+
+      - name: Clean CI containers
+        if: always()
+        run: docker compose --profile test down --volumes --remove-orphans
+
+  images:
+    name: Publish ${{ matrix.image }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ops-copilot-frontend
+            context: frontend
+            target: runner
+          - image: ops-copilot-api
+            context: api-gateway
+            target: runner
+          - image: ops-copilot-migrate
+            context: api-gateway
+            target: migrator
+          - image: ops-copilot-agent
+            context: agent-service
+            target: runner
+          - image: ops-copilot-mcp
+            context: mcp-server
+            target: runner
+    env:
+      REGISTRY: asia-southeast1-docker.pkg.dev/ops-copilot-509214/ops-copilot
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          required=(
+            GCP_PROJECT_ID
+            GCP_REGION
+            GAR_REPOSITORY
+            GCP_WORKLOAD_IDENTITY_PROVIDER
+            GCP_DEPLOY_SERVICE_ACCOUNT
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing GitHub deployment configuration: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Authenticate to Google Cloud
+        id: gcp-auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Log in to Artifact Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.gcp-auth.outputs.access_token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and publish image
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ matrix.image }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ matrix.image }}:latest
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          provenance: mode=max
+          sbom: true
+
+  deploy:
+    name: Deploy production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          required=(
+            GCP_PROJECT_ID
+            GCP_REGION
+            GCP_ZONE
+            GCP_VM_NAME
+            GAR_REPOSITORY
+            GCP_WORKLOAD_IDENTITY_PROVIDER
+            GCP_DEPLOY_SERVICE_ACCOUNT
+            PRODUCTION_SECRET_ID
+            PRODUCTION_SECRET_VERSION
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing GitHub deployment configuration: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Create deployment bundle
+        shell: bash
+        run: |
+          install -d -m 0700 deploy-bundle/infra/nginx deploy-bundle/infra/gcp
+          install -m 0644 docker-compose.prod.yml deploy-bundle/docker-compose.prod.yml
+          install -m 0644 infra/nginx/nginx.conf deploy-bundle/infra/nginx/nginx.conf
+          install -m 0644 infra/nginx/production.conf deploy-bundle/infra/nginx/production.conf
+          install -m 0644 infra/nginx/production-http.conf deploy-bundle/infra/nginx/production-http.conf
+          install -m 0755 infra/gcp/remote-deploy.sh deploy-bundle/infra/gcp/remote-deploy.sh
+          install -m 0755 infra/gcp/issue-certificate.sh deploy-bundle/infra/gcp/issue-certificate.sh
+          install -m 0755 infra/gcp/sync-certificate.sh deploy-bundle/infra/gcp/sync-certificate.sh
+          tar -czf "ops-copilot-${GITHUB_SHA}.tgz" -C deploy-bundle .
+          chmod 0600 "ops-copilot-${GITHUB_SHA}.tgz"
+
+      - name: Upload deployment bundle
+        shell: bash
+        run: |
+          gcloud compute scp \
+            "ops-copilot-${GITHUB_SHA}.tgz" \
+            "${GCP_VM_NAME}:/tmp/ops-copilot-${GITHUB_SHA}.tgz" \
+            --project="$GCP_PROJECT_ID" \
+            --zone="$GCP_ZONE" \
+            --quiet
+
+      - name: Activate release
+        shell: bash
+        run: |
+          registry="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}"
+          remote_command="set -Eeuo pipefail; archive=/tmp/ops-copilot-${GITHUB_SHA}.tgz; staging=/tmp/ops-copilot-${GITHUB_SHA}; cleanup() { sudo rm -rf -- \"\$staging\"; rm -f -- \"\$archive\"; }; trap cleanup EXIT; chmod 600 \"\$archive\"; install -d -m 0700 \"\$staging\"; tar -xzf \"\$archive\" -C \"\$staging\"; sudo bash \"\$staging/infra/gcp/remote-deploy.sh\" '${GITHUB_SHA}' '${registry}' '${OPS_COPILOT_DOMAIN}' '${PRODUCTION_SECRET_ID}' '${PRODUCTION_SECRET_VERSION}' \"\$staging\""
+          gcloud compute ssh "$GCP_VM_NAME" \
+            --project="$GCP_PROJECT_ID" \
+            --zone="$GCP_ZONE" \
+            --command="$remote_command" \
+            --quiet

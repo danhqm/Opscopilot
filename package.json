@@ -1,0 +1,20 @@
+{
+  "name": "ops-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:api": "npm --prefix api-gateway run dev",
+    "lint": "npm --prefix frontend run lint && npm --prefix api-gateway run typecheck",
+    "build": "npm --prefix frontend run build && npm --prefix api-gateway run build",
+    "typecheck": "npm --prefix frontend run typecheck && npm --prefix api-gateway run typecheck",
+    "test": "npm --prefix api-gateway run test",
+    "smoke:rag": "node scripts/test-rag-pipeline.mjs",
+    "smoke:agent": "node scripts/test-agent-chat.mjs",
+    "smoke:mcp": "node scripts/test-mcp-tools.mjs",
+    "smoke:workflow": "node scripts/test-workflow-automation.mjs"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

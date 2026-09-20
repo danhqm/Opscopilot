@@ -1,0 +1,9 @@
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+mcp==2.2.0
+sqlalchemy==2.0.54
+pymysql==1.2.3
+pydantic-settings==2.15.0
+chromadb==1.5.9
+openai==3.14.1
+httpx==0.28.1

@@ -1,0 +1,229 @@
+name: ops-copilot
+
+services:
+  nginx:
+    image: nginx:1.30.5-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api-gateway:
+        condition: service_healthy
+      agent-service:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: /api
+    environment:
+      NODE_ENV: production
+    healthcheck:
+      test:
+        ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  api-gateway:
+    build: ./api-gateway
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      DATABASE_URL: mysql://${MYSQL_USER:-ops_copilot}:${MYSQL_PASSWORD:-change-me-local}@mysql:3306/${MYSQL_DATABASE:-ops_copilot}
+      REDIS_URL: redis://redis:6379
+      FRONTEND_ORIGIN: http://localhost:8080
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  worker:
+    build: ./api-gateway
+    command: ["node", "dist/worker.js"]
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mysql://${MYSQL_USER:-ops_copilot}:${MYSQL_PASSWORD:-change-me-local}@mysql:3306/${MYSQL_DATABASE:-ops_copilot}
+      REDIS_URL: redis://redis:6379
+      AGENT_SERVICE_URL: http://agent-service:8000
+      WORKFLOW_EXECUTION_TIMEOUT_MS: 300000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      agent-service:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api-integration-test:
+    profiles: ["test"]
+    build:
+      context: ./api-gateway
+      target: test
+    env_file: .env
+    environment:
+      NODE_ENV: test
+      DATABASE_URL: mysql://${MYSQL_USER:-ops_copilot}:${MYSQL_PASSWORD:-change-me-local}@mysql:3306/${MYSQL_DATABASE:-ops_copilot}
+      RUN_MYSQL_INTEGRATION: "true"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  migrate:
+    build:
+      context: ./api-gateway
+      target: migrator
+    env_file: .env
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:-ops_copilot}:${MYSQL_PASSWORD:-change-me-local}@mysql:3306/${MYSQL_DATABASE:-ops_copilot}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: "no"
+
+  agent-service:
+    build: ./agent-service
+    env_file: .env
+    environment:
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-ops_copilot}:${MYSQL_PASSWORD:-change-me-local}@mysql:3306/${MYSQL_DATABASE:-ops_copilot}
+      CHROMA_URL: http://chromadb:8000
+      MCP_SERVER_URL: http://mcp-server:8100
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads_data:/app/uploads:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      chromadb:
+        condition: service_healthy
+      mcp-server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/agent/health')",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  agent-test:
+    profiles: ["test"]
+    build:
+      context: ./agent-service
+      target: test
+    restart: "no"
+
+  mcp-server:
+    build: ./mcp-server
+    env_file: .env
+    environment:
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-ops_copilot}:${MYSQL_PASSWORD:-change-me-local}@mysql:3306/${MYSQL_DATABASE:-ops_copilot}
+      CHROMA_URL: http://chromadb:8000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/mcp/health')",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  mcp-test:
+    profiles: ["test"]
+    build:
+      context: ./mcp-server
+      target: test
+    restart: "no"
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ops_copilot}
+      MYSQL_USER: ${MYSQL_USER:-ops_copilot}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me-local}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-me-root}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  chromadb:
+    image: chromadb/chroma:1.5.9
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes:
+      - chroma_data:/data
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:
+  chroma_data:
+  uploads_data:

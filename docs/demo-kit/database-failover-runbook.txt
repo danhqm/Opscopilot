@@ -1,0 +1,41 @@
+NORTHSTAR COMMERCE
+Database Failover Runbook
+Revision: 4.2
+Owner: Priya Shah, Database Reliability
+Last reviewed: 2026-09-12
+
+Purpose
+This runbook covers failover of the primary orders database in the Kuala Lumpur production region.
+
+Activation criteria
+- Declare SEV-1 if the primary database is unavailable for more than three minutes.
+- Also declare SEV-1 if replication lag exceeds thirty seconds for five consecutive minutes.
+- The incident commander must freeze application deployments before approving failover.
+
+Pre-failover checks
+1. Record the incident ID and current UTC time in the operations log.
+2. Confirm the selected replica has less than ten seconds of replication lag.
+3. Confirm the most recent backup completed successfully within the last six hours.
+4. Ask the application lead to stop non-essential batch jobs.
+
+Failover procedure
+1. Promote the healthiest replica.
+2. Update the database service record to point to the new primary.
+3. Restart only connection pools that do not recover automatically.
+4. Do not restart the whole application unless the application lead approves it.
+
+Required verification after failover
+- Run one read transaction and one write transaction through the public application API.
+- Confirm checkout, refund, and inventory reservation operations succeed.
+- Confirm background jobs drain normally from the queue.
+- Confirm all surviving replicas are following the new primary.
+- Confirm the five-minute API error rate is below two percent.
+- Record every verification result in the operations log.
+
+Escalation and rollback
+- Page the database owner immediately if post-failover replication lag exceeds thirty seconds.
+- Roll back traffic if the API error rate remains above five percent for ten minutes.
+- Keep the incident open until thirty minutes of stable writes have been observed.
+
+Evidence required for closure
+Attach the replication-health screenshot, the successful write transaction ID, the queue-depth graph, and the final incident timeline.

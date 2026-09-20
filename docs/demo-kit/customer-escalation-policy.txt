@@ -1,0 +1,25 @@
+NORTHSTAR COMMERCE
+Customer Incident Communication Policy
+Revision: 3.1
+Owner: Sofia Martinez, Customer Operations
+Effective: 2026-08-01
+
+Severity definitions
+- Priority 1: complete outage, material data risk, or checkout unavailable for more than five minutes.
+- Priority 2: degraded service with a functioning workaround.
+- Priority 3: limited impact with no material customer interruption.
+
+Communication targets
+- Priority 1: acknowledge internally within five minutes and publish the first customer update within ten minutes.
+- Priority 1: send executive stakeholders an update every thirty minutes.
+- Priority 2: publish the first customer update within thirty minutes and update every sixty minutes.
+- Priority 3: provide an update in the next normal support cycle.
+
+Required content for a Priority 1 update
+State the affected capability, the observed start time in UTC, current customer impact, mitigation underway, and the time of the next update. Do not speculate about root cause before it is confirmed.
+
+Ownership
+The incident commander owns technical accuracy. Customer Operations owns the status-page message. Legal approval is required only when confirmed data exposure is involved.
+
+Closure
+Publish a resolution notice after the incident commander confirms thirty minutes of stable service. A customer-facing review is required within five business days for every Priority 1 incident.

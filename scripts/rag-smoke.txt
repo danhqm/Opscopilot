@@ -1,0 +1,1 @@
+After a database failover, the on-call engineer must verify replication health, confirm application writes succeed, and record the incident timeline in the operations log. If replication lag exceeds thirty seconds, page the database owner and keep the incident open.

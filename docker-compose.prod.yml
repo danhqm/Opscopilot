@@ -1,0 +1,221 @@
+name: ops-copilot
+
+services:
+  nginx:
+    image: nginx:1.30.5-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${NGINX_SITE_CONFIG:-./infra/nginx/production.conf}:/etc/nginx/conf.d/default.conf:ro
+      - /opt/ops-copilot/tls:/etc/nginx/tls:ro
+      - /var/www/certbot:/var/www/certbot:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api-gateway:
+        condition: service_healthy
+      agent-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/nginx-health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  frontend:
+    image: ${IMAGE_REGISTRY:?IMAGE_REGISTRY is required}/ops-copilot-frontend:${IMAGE_TAG:?IMAGE_TAG is required}
+    environment:
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  api-gateway:
+    image: ${IMAGE_REGISTRY:?IMAGE_REGISTRY is required}/ops-copilot-api:${IMAGE_TAG:?IMAGE_TAG is required}
+    env_file: .env.production
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+      REDIS_URL: redis://redis:6379
+      FRONTEND_ORIGIN: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      AGENT_SERVICE_URL: http://agent-service:8000
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  worker:
+    image: ${IMAGE_REGISTRY:?IMAGE_REGISTRY is required}/ops-copilot-api:${IMAGE_TAG:?IMAGE_TAG is required}
+    command: ["node", "dist/worker.js"]
+    env_file: .env.production
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+      REDIS_URL: redis://redis:6379
+      AGENT_SERVICE_URL: http://agent-service:8000
+      WORKFLOW_EXECUTION_TIMEOUT_MS: 300000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      agent-service:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  migrate:
+    image: ${IMAGE_REGISTRY:?IMAGE_REGISTRY is required}/ops-copilot-migrate:${IMAGE_TAG:?IMAGE_TAG is required}
+    env_file: .env.production
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+  agent-service:
+    image: ${IMAGE_REGISTRY:?IMAGE_REGISTRY is required}/ops-copilot-agent:${IMAGE_TAG:?IMAGE_TAG is required}
+    env_file: .env.production
+    environment:
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+      CHROMA_URL: http://chromadb:8000
+      MCP_SERVER_URL: http://mcp-server:8100
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads_data:/app/uploads:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      chromadb:
+        condition: service_healthy
+      mcp-server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/agent/health')",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  mcp-server:
+    image: ${IMAGE_REGISTRY:?IMAGE_REGISTRY is required}/ops-copilot-mcp:${IMAGE_TAG:?IMAGE_TAG is required}
+    env_file: .env.production
+    environment:
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+      CHROMA_URL: http://chromadb:8000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/mcp/health')",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  chromadb:
+    image: chromadb/chroma:1.5.9
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes:
+      - chroma_data:/data
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000"]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:
+  chroma_data:
+  uploads_data:

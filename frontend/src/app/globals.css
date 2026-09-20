@@ -1,0 +1,107 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) * 0.7);
+  --radius-md: calc(var(--radius) * 0.85);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.35);
+}
+
+:root {
+  --background: oklch(0.14 0.018 252);
+  --foreground: oklch(0.97 0.008 225);
+  --card: oklch(0.18 0.021 252);
+  --card-foreground: oklch(0.97 0.008 225);
+  --popover: oklch(0.18 0.021 252);
+  --popover-foreground: oklch(0.97 0.008 225);
+  --primary: oklch(0.78 0.14 191);
+  --primary-foreground: oklch(0.16 0.03 210);
+  --secondary: oklch(0.24 0.023 252);
+  --secondary-foreground: oklch(0.96 0.008 225);
+  --muted: oklch(0.225 0.02 252);
+  --muted-foreground: oklch(0.7 0.025 245);
+  --accent: oklch(0.26 0.04 215);
+  --accent-foreground: oklch(0.98 0.008 225);
+  --destructive: oklch(0.68 0.19 25);
+  --border: oklch(0.3 0.026 250 / 72%);
+  --input: oklch(0.3 0.026 250 / 78%);
+  --ring: oklch(0.78 0.14 191);
+  --radius: 0.7rem;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply bg-background font-sans;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  button,
+  a,
+  input,
+  textarea,
+  select,
+  summary {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 35%, transparent);
+  }
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--border) 90%, transparent) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--border) 90%, transparent);
+  background-clip: padding-box;
+}
+
+.ops-grid {
+  background-image:
+    linear-gradient(to right, color-mix(in oklch, var(--border) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklch, var(--border) 55%, transparent) 1px, transparent 1px),
+    radial-gradient(circle at 35% 45%, color-mix(in oklch, var(--primary) 11%, transparent), transparent 38%);
+  background-size: 48px 48px, 48px 48px, 100% 100%;
+  mask-image: linear-gradient(to bottom, black, transparent 88%);
+}
