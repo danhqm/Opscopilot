@@ -49,6 +49,9 @@ jobs:
           npm ci --prefix frontend
           npm ci --prefix api-gateway
 
+      - name: Generate Prisma client
+        run: npm --prefix api-gateway run prisma:generate
+
       - name: Create safe CI environment
         run: cp .env.example .env
 
